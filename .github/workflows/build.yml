@@ -29,7 +29,7 @@ jobs:
 
     - name: Build Executable with PyInstaller
       run: |
-        pyinstaller --noconsole --onefile --icon=logo.ico khangg.py
+        pyinstaller --noconsole --onefile --icon=logo.ico sucword.py
 
     - name: Upload Build Artifacts
       uses: actions/upload-artifact@v4
