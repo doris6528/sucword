@@ -29,14 +29,25 @@ class PyQtHtmlToDocxParser(HTMLParser):
         self.doc = doc
         self.current_p = None
         self.fmt_stack = [{}]
+        self.ignore_depth = 0
+        self.current_text_buffer = "" # Gom nội dung text của đoạn hiện tại để lọc đoạn trống
 
     def handle_starttag(self, tag, attrs):
+        if tag in ['style', 'head', 'meta', 'title', 'script']:
+            self.ignore_depth += 1
+            return
+
+        if self.ignore_depth > 0:
+            return
+
         attr_dict = dict(attrs)
         style = attr_dict.get('style', '')
         align = attr_dict.get('align', '')
 
         if tag in ['p', 'div', 'h1', 'h2', 'h3']:
+            # Nếu đang có paragraph trước đó mà hoàn toàn trống, ta có thể xóa/bỏ qua nó
             self.current_p = self.doc.add_paragraph()
+            self.current_text_buffer = ""
             if 'align:center' in style or 'text-align:center' in style or align == 'center':
                 self.current_p.alignment = WD_ALIGN_PARAGRAPH.CENTER
             elif 'align:right' in style or 'text-align:right' in style or align == 'right':
@@ -77,14 +88,36 @@ class PyQtHtmlToDocxParser(HTMLParser):
         self.fmt_stack.append(new_fmt)
 
     def handle_endtag(self, tag):
+        if tag in ['style', 'head', 'meta', 'title', 'script']:
+            if self.ignore_depth > 0:
+                self.ignore_depth -= 1
+            return
+
+        if self.ignore_depth > 0:
+            return
+
+        if tag in ['p', 'div', 'h1', 'h2', 'h3']:
+            # Kiểm tra nếu paragraph không có nội dung thực tế (chỉ chứa khoảng trắng hoặc rỗng)
+            if self.current_p and not self.current_text_buffer.strip():
+                # Xóa paragraph rỗng khỏi document bằng cách lấy element gốc XML và loại bỏ
+                p_elem = self.current_p._element
+                p_elem.getparent().remove(p_elem)
+                self.current_p = None
+
         if len(self.fmt_stack) > 1:
             self.fmt_stack.pop()
 
     def handle_data(self, data):
+        if self.ignore_depth > 0:
+            return
         if not data:
             return
+        
         if self.current_p is None:
             self.current_p = self.doc.add_paragraph()
+            self.current_text_buffer = ""
+
+        self.current_text_buffer += data
         
         fmt = self.fmt_stack[-1]
         run = self.current_p.add_run(data)
@@ -117,7 +150,6 @@ class PageCanvas(QWidget):
         self.setFixedHeight(self.MIN_HEIGHT + self.PADDING_TOP_BOTTOM * 2)
 
     def update_canvas_height(self, content_height):
-        # Tính toán chiều cao trang giấy trắng mới
         new_paper_h = max(self.MIN_HEIGHT, int(content_height) + 120)
         if self.paper_height != new_paper_h:
             self.paper_height = new_paper_h
@@ -306,13 +338,12 @@ class SucWord(QMainWindow):
 
         self.canvas = PageCanvas()
         canvas_layout = QHBoxLayout(self.canvas)
-        # Đặt lề trên 50px cho vùng nhập văn bản bên trong tờ giấy trắng
         canvas_layout.setContentsMargins(0, PageCanvas.PADDING_TOP_BOTTOM + 50, 0, PageCanvas.PADDING_TOP_BOTTOM + 50)
         canvas_layout.setSpacing(0)
 
         # Trình biên soạn Editor chuẩn
         self.editor = QTextEdit()
-        self.editor.setFixedWidth(PageCanvas.PAGE_WIDTH - 100) # Rộng 716px, lề trái/phải 50px
+        self.editor.setFixedWidth(PageCanvas.PAGE_WIDTH - 100) 
         self.editor.setFont(QFont("Lora", 13))
         self.editor.setStyleSheet("""
             QTextEdit {
@@ -323,7 +354,6 @@ class SucWord(QMainWindow):
             }
         """)
 
-        # Tắt thanh cuộn riêng của Editor
         self.editor.setVerticalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
         self.editor.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
 
@@ -331,7 +361,6 @@ class SucWord(QMainWindow):
         self.editor.cursorPositionChanged.connect(self.on_cursor_changed)
 
         canvas_layout.addStretch()
-        # Thêm cờ Qt.AlignTop để ghim vùng soạn thảo ở đỉnh trang giấy
         canvas_layout.addWidget(self.editor, 0, Qt.AlignTop)
         canvas_layout.addStretch()
 
@@ -358,7 +387,6 @@ class SucWord(QMainWindow):
             pass
 
     def on_text_changed(self):
-        # Tự động mở rộng trang giấy theo chiều cao văn bản thực tế
         doc_height = self.editor.document().documentLayout().documentSize().height()
         self.editor.setFixedHeight(max(100, int(doc_height) + 20))
         self.canvas.update_canvas_height(doc_height)
@@ -370,7 +398,6 @@ class SucWord(QMainWindow):
         self.auto_scroll_to_cursor()
 
     def auto_scroll_to_cursor(self):
-        """Tự động cuộn trang khi con trỏ gõ xuống gần mép dưới màn hình"""
         cursor_rect = self.editor.cursorRect()
         viewport = self.scroll_area.viewport()
         
